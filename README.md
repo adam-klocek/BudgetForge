@@ -1,3 +1,9 @@
+# BudgetForge — Multi-user Supabase edition (v5.1)
+
+**Start with [README_MULTIUSER.md](README_MULTIUSER.md)** for required Supabase SQL, login setup, Cloud deployment, and two-user testing. This is a **testing beta**. Do not upload real bank records to the public deployment yet. The original single-user instructions below remain for feature reference; local storage guidance there has been superseded.
+
+---
+
 # BudgetForge v5
 
 **Shape your financial future**  

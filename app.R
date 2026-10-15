@@ -1,4 +1,4 @@
-# BudgetForge — local-first, single-user Shiny budget app (CZK)
+# BudgetForge — Supabase account isolation (v5 compatibility bridge)
 options(shiny.maxRequestSize = 50 * 1024^2)
 library(shiny)
 library(bslib)
@@ -14,6 +14,7 @@ source("R/engine.R", encoding="UTF-8")
 source("R/income.R", encoding="UTF-8")
 source("R/receivables.R", encoding="UTF-8")
 source("R/finance_extensions.R", encoding="UTF-8")
+source("R/supabase_snapshot.R", encoding="UTF-8")
 
 fmt <- function(x) format_czk(x) # server overrides with chosen currency
 opt_ids <- function(df, prefix="— Select —") {
@@ -65,22 +66,19 @@ css <- '
   .table {font-size:13px;}
   .progress {background:#eff3f7;border-radius:7px;}
   .badge-soft {font-size:12px;background:#e9f5f2;color:#116853;padding:6px 10px;border-radius:20px;font-weight:700;}
+  .bf-auth-backdrop {position:fixed;z-index:30000;inset:0;overflow:auto;display:flex;
+    justify-content:center;align-items:center;padding:25px;background:#f1f6fa;}
+  .bf-auth-card {width:min(470px,100%);padding:34px;background:white;border-radius:20px;
+    box-shadow:0 12px 45px rgba(9,31,59,.15);}
   @media(max-width:700px){.tab-content{padding:18px 12px 35px}.metric-value{font-size:26px}.toolbar{padding:12px}.panel-box{padding:17px}}
 '
 
 ui <- bslib::page_navbar(
-  title = tagList(
-    HTML('<svg width="25" height="25" viewBox="0 0 64 64"
-    style="vertical-align:-5px;margin-right:8px"
-    aria-hidden="true">
-    <path fill="currentColor"
-      d="M4 15h56v7H48c-1 7-7 12-14 13v8h14v7H16v-7h14v-8C20 34 15 30 13 22H4zM12 52h40v6H12z"/>
-    </svg>'),
-    " BudgetForge"
-  ),
+  title=tagList(HTML('<svg width="25" height="25" viewBox="0 0 64 64" style="vertical-align:-5px;margin-right:7px" aria-hidden="true"><path fill="currentColor" d="M4 15h56v7H48c-1 7-7 12-14 13v8h14v7H16v-7h14zM12 52h40v6H12z"/></svg>'), "BudgetForge"),
   theme=bslib::bs_theme(version=5,bootswatch="flatly",primary="#176b80"),
   header=tagList(tags$head(tags$style(HTML(css)),tags$script(src="translations.js")), div(class="toolbar",
              div(span(class="eyebrow","Shape your financial future"),div(class="toolbar-note","Know where your money goes. Make every plan count.")),
+             uiOutput("bf_auth_status"),
              selectInput("month","Active budget month",choices=month_options(),selected=format(Sys.Date(),"%Y-%m"),width="200px"))),
   nav_panel("Overview",value="overview",
     section("Your monthly command center","Actual transactions, future commitments, and realistic discretionary spending in one place."),
@@ -106,7 +104,7 @@ ui <- bslib::page_navbar(
     section("Transactions & automatic categorization","Import Fio + ČSAS exports, correct classifications, and teach BudgetForge your own keyword rules."),
     fluidRow(
       column(5,div(class="panel-box",h3("Import bank statements"),fileInput("bank_files","Choose CSV files",accept=c(".csv","text/csv"),multiple=TRUE),
-         actionButton("import_banks","Import & categorize",class="btn-primary"),p(class="hint","Duplicate transactions are skipped on repeat imports. Imports stay in your local SQLite database."),textOutput("import_status"))),
+         actionButton("import_banks","Import & categorize",class="btn-primary"),p(class="hint","Duplicate transactions are skipped on repeat imports. Imports go to your private signed-in account; please test with fictional statements first."),textOutput("import_status"))),
       column(7,div(class="panel-box",h3("Add a cash transaction or unexpected income"),
         fluidRow(column(5,dateInput("manual_date","Date",value=Sys.Date())),column(7,selectInput("manual_flow","Type",choices=c("Expense"="expense","Unexpected income"="income","Debt payment"="debt","ATM withdrawal"="withdrawal","Account transfer"="transfer")))),
         textInput("manual_desc","Description","Cash payment / bonus"),numericInput("manual_amount","Amount in CZK (positive)",value=0,min=0,step=100),
@@ -366,64 +364,134 @@ ui <- bslib::page_navbar(
         p("4. Set aside amounts for annual bills under Sinking funds and record money others owe you under Money lent."),
         p("5. Set your planning calendar; optionally import bank CSVs or enter transactions manually."),
         uiOutput("setup_progress"),
-        p(class="hint","No Excel import or template is necessary. Your plans and data are stored locally in SQLite.")))),
-    
-    div(class="panel-box",
-        h3("Security, accuracy & interpretation"),
-        tags$ul(
-          tags$li("Local-first: this version stores finances in data/flowwise.sqlite. It has no multi-user authentication and is not designed for public hosting."),
-          tags$li("CZK and EUR display are supported at a user-selected planning rate. Historical imported CSV transactions currently require CZK amounts; do not treat this rate as historical FX."),
-          tags$li("Forecasts are monthly estimates, and an amount marked available after payday may not be available to spend today."),
-          tags$li("You may enter all plans manually; bank CSV imports are optional. Source files contain no banking or Excel records."),
-          tags$li("One-off debt payments are planned separately from actual bank transactions. Update each loan's current balance after paying.")
-        )
-    ),
-    div(class="panel-box",
-        h3("About BudgetForge"),
-        p(strong("Shape your financial future")),
-        p("Created by Mgr. Adam Klocek, Ph.D.")
-    )
-  ),
+        p(class="hint","No Excel template needed. Your budget is saved to your private Supabase account after each edit.")))),
+    div(class="panel-box",h3("Security, accuracy & interpretation"),
+      tags$ul(tags$li("Accounts sign in with Supabase. Each user has an isolated working database saved to a private, RLS-protected cloud snapshot. This is a beta; do not upload real bank statements until security review."),
+              tags$li("CZK and EUR display are supported at a user-selected planning rate. Historical imported CSV transactions currently require CZK amounts; do not treat this rate as historical FX."),
+              tags$li("Forecasts are monthly estimates, and an amount marked available after payday may not be available to spend today."),
+              tags$li("You may enter all plans manually; bank CSV imports are optional. Source files contain no banking or Excel records."),
+              tags$li("One-off debt payments are planned separately from actual bank transactions. Update each loan's current balance after paying."))),
+    div(class="panel-box",h3("About BudgetForge"),p(strong("Shape your financial future")),p("Created by Mgr. Adam Klocek, Ph.D."))),
   id="main_nav"
 )
 
+# Keep the original page_navbar static so bslib/Bootstrap dependencies load.
+# A full-screen gate prevents interactive use until Supabase verifies login.
+ui <- tagList(ui, uiOutput('bf_access_gate'))
 
+server <- function(input,output,session) {
+  # No visitor accesses the repository's shared data/flowwise.sqlite.
+  # All local SQLite files are unique to the current Shiny browser session.
+  session_db <- tempfile(pattern='bf_session_', fileext='.sqlite')
+  con <- bf_fresh_connection(session_db)
+  auth <- reactiveValues(account=NULL, authorized=FALSE, locked=FALSE, error='')
+  cloud_revision <- NULL
 
-server <- function(input, output, session) {
-  
-  # Create a unique temporary database for this session.
-  session_db <- tempfile(
-    pattern = "budgetforge_",
-    fileext = ".sqlite"
-  )
-  
-  # Connect only this visitor to their own database.
-  con <- connect_db(path = session_db)
-  
-  init_db(con)
-  init_planning_db(con)
-  init_income_db(con)
-  init_receivables_db(con)
-  init_budgetforge_db(con)
-  
   session$onSessionEnded(function() {
-    
-    if (DBI::dbIsValid(con)) {
-      DBI::dbDisconnect(con)
-    }
-    
-    # Clean up this session's temporary database files.
-    unlink(c(
-      session_db,
-      paste0(session_db, "-wal"),
-      paste0(session_db, "-shm"),
-      paste0(session_db, "-journal")
-    ))
-    
+    if (DBI::dbIsValid(con)) DBI::dbDisconnect(con)
+    unlink(c(session_db,paste0(session_db,c('-journal','-wal','-shm'))))
   })
+
+  # Update cloud state after every successful edit. If a save fails, we lock
+  # the editor to avoid silently losing changes or overwriting other sessions.
+  cloud_save <- function() {
+    if (!isTRUE(auth$authorized) || isTRUE(auth$locked)) return(invisible(NULL))
+    tryCatch({
+      account <- bf_valid_access(isolate(auth$account))
+      new_revision <- bf_upload_snapshot(account, con, session_db, cloud_revision)
+      auth$account <- account
+      cloud_revision <<- new_revision
+    }, error=function(e) {
+      auth$locked <- TRUE
+      auth$error <- paste('Cloud synchronization failed:', conditionMessage(e),
+                          'Your changes may only exist in this browser session. Reload from cloud or contact the app owner.')
+      showNotification(auth$error, type='error', duration=NULL)
+      stop(conditionMessage(e))
+    })
+    invisible(TRUE)
+  }
+
   rev <- reactiveVal(0L)
-  refresh <- function() rev(isolate(rev())+1L)
-  inform <- function(expr, message="Saved") tryCatch({force(expr);refresh();showNotification(message,type="message",duration=4)},error=function(e) showNotification(conditionMessage(e),type="error",duration=9))
+  refresh <- function() {
+    cloud_save()
+    rev(isolate(rev())+1L)
+  }
+  inform <- function(expr, message="Saved") {
+    if (!isTRUE(auth$authorized) || isTRUE(auth$locked)) return(invisible(NULL))
+    tryCatch({force(expr); refresh(); showNotification(message,type='message',duration=4)},
+             error=function(e)showNotification(conditionMessage(e),type='error',duration=9))
+  }
+
+  output$bf_auth_status <- renderUI({if(isTRUE(auth$authorized))tagList(
+    span(style='font-size:12px;margin-right:10px',auth$account$email),
+    actionButton('bf_logout','Sign out',class='btn-outline-secondary'))})
+
+  output$bf_access_gate <- renderUI({
+    if (isTRUE(auth$authorized) && !isTRUE(auth$locked)) return(NULL)
+    if (isTRUE(auth$locked)) {
+      return(div(class='bf-auth-backdrop',div(class='bf-auth-card',
+        h2('Cloud sync paused'),p(auth$error),
+        p('Reload discards the unsaved changes from this session.'),
+        actionButton('bf_reload','Discard local changes and reload',class='btn-primary'),
+        actionButton('bf_logout','Sign out'))))
+    }
+    div(class='bf-auth-backdrop',div(class='bf-auth-card',
+      h2('BudgetForge'),p('Shape your financial future'),
+      p('Sign in with a verified Supabase account. This beta is for fictional financial data.'),
+      textInput('bf_email','Email',placeholder='you@example.com'),
+      passwordInput('bf_password','Password'),
+      actionButton('bf_login','Sign in',class='btn-primary'),
+      if(nzchar(auth$error))p(style='color:#aa2434;margin-top:1rem',auth$error),
+      tags$hr(),p(class='hint','Your account is stored separately from other users. Sign-up is managed in Supabase Authentication.')))
+  })
+
+  # Auth token stays in Shiny's server-side session, never in a browser field.
+  bf_load_account <- function(account) {
+    account <- bf_valid_access(account)
+    snapshot <- bf_download_snapshot(account)
+    # Only discard old working state after the authenticated download succeeds.
+    path_new <- tempfile(pattern='bf_restore_',fileext='.sqlite')
+    loaded <- tryCatch(bf_fresh_connection(path_new,snapshot$bytes),error=function(e){
+      unlink(path_new);stop(e)
+    })
+    if(DBI::dbIsValid(con)) DBI::dbDisconnect(con)
+    unlink(c(session_db,paste0(session_db,c('-journal','-wal','-shm'))))
+    # R keeps the connection object pointing at the new path; every existing
+    # DBI query in the app still references the same local `con` variable.
+    session_db <<- path_new
+    con <<- loaded
+    cloud_revision <<- snapshot$revision
+    auth$account <- account
+    auth$locked <- FALSE
+    auth$error <- ''
+    auth$authorized <- TRUE
+    if(is.null(snapshot$revision)) cloud_save() # first-time account seed
+    rev(isolate(rev())+1L)
+  }
+
+  observeEvent(input$bf_login,{
+    tryCatch({
+      account <- bf_sign_in(isolate(input$bf_email),isolate(input$bf_password))
+      bf_load_account(account)
+      updateTextInput(session,'bf_password',value='')
+      showNotification(paste('Signed in:',account$email),type='message')
+    },error=function(e){auth$authorized <- FALSE;auth$error <- conditionMessage(e)})
+  })
+  observeEvent(input$bf_reload,{
+    tryCatch(bf_load_account(isolate(auth$account)),error=function(e){
+      auth$locked <- TRUE;auth$error <- conditionMessage(e)
+    })
+  })
+  observeEvent(input$bf_logout,{
+    if(DBI::dbIsValid(con)) DBI::dbDisconnect(con)
+    unlink(c(session_db,paste0(session_db,c('-journal','-wal','-shm'))))
+    session_db <<- tempfile(pattern='bf_session_',fileext='.sqlite')
+    con <<- bf_fresh_connection(session_db)
+    cloud_revision <<- NULL
+    auth$account <- NULL;auth$authorized <- FALSE
+    auth$locked <- FALSE;auth$error <- ''
+    rev(isolate(rev())+1L)
+  })
   cat_data <- reactive({rev();get_categories(con)})
   src_data <- reactive({rev();get_sources(con)})
   once_data <- reactive({rev();get_oneoffs(con)})
@@ -462,10 +530,10 @@ server <- function(input, output, session) {
     options$language <- if(app_lang()=='de') list(
        emptyTable='Keine Daten verfügbar',zeroRecords='Keine passenden Einträge',
        info='Einträge _START_ bis _END_ von _TOTAL_',infoEmpty='Keine Einträge',
-       paginate=list(previous='Zurück',"next"='Weiter'),lengthMenu='_MENU_ Einträge') else list(
+       paginate=list(previous='Zurück',`next`='Weiter'),lengthMenu='_MENU_ Einträge') else list(
        emptyTable='No data available',zeroRecords='No matching records',
        info='Showing _START_ to _END_ of _TOTAL_',infoEmpty='No entries',
-       paginate=list(previous='Previous',"next"='Next'),lengthMenu='_MENU_ rows')
+       paginate=list(previous='Previous',`next`='Next'),lengthMenu='_MENU_ rows')
     DT::datatable(data,...,options=options)
   }
   observeEvent(settings_data(),{
@@ -661,7 +729,7 @@ server <- function(input, output, session) {
     req(input$source_choice)
     sources<-src_data()
     i<-if(input$source_choice=='new')NA_integer_ else match(as.integer(input$source_choice),sources$id)
-    if(is.na(i)) {
+    if(length(i)!=1L || is.na(i)) {
       updateTextInput(session,'source_name',value='')
       updateSelectInput(session,'source_kind',selected='fixed')
       updateNumericInput(session,'source_amount',value=0)
@@ -746,7 +814,7 @@ server <- function(input, output, session) {
     x<-once_data(); selected<-input$once_choice
     if(is.null(selected))return()
     i<-if(selected=='new')NA_integer_ else match(as.integer(selected),x$id)
-    if(is.na(i)) {
+    if(length(i)!=1L || is.na(i)) {
       updateTextInput(session,'once_name',value='')
       updateDateInput(session,'once_date',value=Sys.Date())
       updateSelectInput(session,'once_certainty',selected='uncertain')
@@ -843,7 +911,7 @@ server <- function(input, output, session) {
     updateSelectInput(session,"debt_choice",choices=opt_ids(d,"+ New debt"),selected=selected)
   })
   observeEvent(input$debt_choice,{req(input$debt_choice);d<-debt_data();i<-if(input$debt_choice=="new") NA_integer_ else match(as.integer(input$debt_choice),d$id)
-    if(is.na(i)) {updateTextInput(session,"debt_name",value="");updateNumericInput(session,"debt_balance",value=0);updateNumericInput(session,"debt_apr",value=0);updateNumericInput(session,"debt_min",value=0);updateNumericInput(session,"debt_day",value=20);updateCheckboxInput(session,"debt_active",value=TRUE);return()}
+    if(length(i)!=1L || is.na(i)) {updateTextInput(session,"debt_name",value="");updateNumericInput(session,"debt_balance",value=0);updateNumericInput(session,"debt_apr",value=0);updateNumericInput(session,"debt_min",value=0);updateNumericInput(session,"debt_day",value=20);updateCheckboxInput(session,"debt_active",value=TRUE);return()}
     updateTextInput(session,"debt_name",value=d$name[i]);updateNumericInput(session,"debt_balance",value=to_ui(d$balance[i]));updateNumericInput(session,"debt_apr",value=d$apr[i]);updateNumericInput(session,"debt_min",value=to_ui(d$min_payment[i]));updateNumericInput(session,"debt_day",value=d$due_day[i]);updateCheckboxInput(session,"debt_active",value=d$active[i]==1)
   })
   observeEvent(input$new_debt,updateSelectInput(session,"debt_choice",selected="new"))
@@ -992,45 +1060,13 @@ server <- function(input, output, session) {
   output$debts_table <- renderDT({d<-debt_data();datatable(data.frame(Debt=d$name,Balance=rv(d$balance),APR=paste0(d$apr,"%"),`Minimum / month`=rv(d$min_payment),Active=ifelse(d$active==1,"Yes","No"),check.names=FALSE),rownames=FALSE,options=list(dom="tip",pageLength=8))})
 
   # Money lent: link an actual imported outflow OR create an explicit cash entry.
-  
   loan_picks <- function(direction) {
-    
     x <- selectable_loan_bank_txns(con, direction)
-    
-    manual_option <- c(
-      "Create a manual cash entry" = "manual"
-    )
-    
-    # No transactions available
-    if (is.null(x) || nrow(x) == 0L) {
-      return(manual_option)
-    }
-    
-    # Generate one label per transaction
-    labels <- paste(
-      x$txn_date,
-      "·",
-      vapply(abs(x$amount), fmt, character(1)),
-      "·",
-      substr(x$description, 1, 58)
-    )
-    
-    transaction_options <- stats::setNames(
-      as.character(x$id),
-      labels
-    )
-    
-    c(manual_option, transaction_options)
+    if (is.null(x) || !nrow(x)) return(c('Manual cash entry'='manual'))
+    labels <- paste(x$txn_date, '·', vapply(abs(x$amount), fmt, character(1)),
+                    '·', substr(x$description, 1, 58))
+    c('Manual cash entry'='manual', stats::setNames(as.character(x$id), labels))
   }
-    observe({
-    loans<-loan_data();sel<-isolate(input$loan_choice)%||%'new'
-    if(sel!='new' && !sel %in% as.character(loans$id)) sel<-'new'
-    updateSelectInput(session,'loan_choice',choices=opt_ids(loans,'+ New money lent'),selected=sel)
-    choices<-setNames(as.character(loans$id[loans$outstanding>0]),
-      sprintf('%s · %s CZK outstanding',loans$borrower[loans$outstanding>0],
-        rv(loans$outstanding[loans$outstanding>0])))
-    updateSelectInput(session,'repay_loan',choices=choices,selected=isolate(input$repay_loan))
-  })
   observe({rev();updateSelectInput(session,'loan_bank_tx',choices=loan_picks('out'),
                                   selected=isolate(input$loan_bank_tx)%||%'manual')
                updateSelectInput(session,'repay_bank_tx',choices=loan_picks('in'),
@@ -1038,7 +1074,7 @@ server <- function(input, output, session) {
   observeEvent(input$loan_choice,{
     x<-loan_data();key<-req(input$loan_choice)
     i<-if(key=='new')NA_integer_ else match(as.integer(key),x$id)
-    if(is.na(i)){
+    if(length(i)!=1L || is.na(i)){
       updateTextInput(session,'loan_borrower',value='')
       updateNumericInput(session,'loan_amount',value=to_ui(1000))
       updateDateInput(session,'loan_date',value=Sys.Date())
@@ -1207,33 +1243,33 @@ server <- function(input, output, session) {
     # Re-render every editor's monetary fields when display settings change.
     # Unsaved edits are deliberately superseded by the persisted values.
     src<-get_sources(con);i<-match(isolate(input$source_choice),as.character(src$id))
-    if(length(i) == 1L && !is.na(i))for(k in c('source_amount','source_low','source_high')) {
+    if(length(i)==1L && !is.na(i))for(k in c('source_amount','source_low','source_high')) {
       nm<-switch(k,source_amount='monthly_amount',source_low='min_amount',source_high='max_amount')
       updateNumericInput(session,k,value=to_ui(src[[nm]][i]))
     }
     d<-get_debts(con);i<-match(isolate(input$debt_choice),as.character(d$id))
-    if(length(i) == 1L && !is.na(i)){updateNumericInput(session,'debt_balance',value=to_ui(d$balance[i]));updateNumericInput(session,'debt_min',value=to_ui(d$min_payment[i]))}
+    if(length(i)==1L && !is.na(i)){updateNumericInput(session,'debt_balance',value=to_ui(d$balance[i]));updateNumericInput(session,'debt_min',value=to_ui(d$min_payment[i]))}
     c<-get_categories(con);i<-match(isolate(input$cat_choice),as.character(c$id))
-    if(length(i) == 1L && !is.na(i)){updateNumericInput(session,'cat_budget',value=to_ui(c$default_budget[i]));
+    if(length(i)==1L && !is.na(i)){updateNumericInput(session,'cat_budget',value=to_ui(c$default_budget[i]));
       b<-month_budgets(con,isolate(input$month)%||%format(Sys.Date(),'%Y-%m'))
       updateNumericInput(session,'cat_override',value=to_ui(b$budget[match(c$id[i],b$id)]))}
     o<-get_oneoffs(con);i<-match(isolate(input$once_choice),as.character(o$id))
-    if(length(i) == 1L && !is.na(i))for(pair in list(c('once_low','low'),c('once_expected','expected'),c('once_high','high')))
+    if(length(i)==1L && !is.na(i))for(pair in list(c('once_low','low'),c('once_expected','expected'),c('once_high','high')))
       updateNumericInput(session,pair[1],value=to_ui(o[[pair[2]]][i]))
     st<-settings_data()
     # Currency change can occur while any tab is open. Ensure saved selections
     # are shown in the newly chosen unit when users return to their editors.
     f<-get_funds(con);i<-match(isolate(input$fund_choice),as.character(f$id))
-    if(length(i) == 1L && !is.na(i)){updateNumericInput(session,'fund_cost',value=to_ui(f$annual_cost[i]));updateNumericInput(session,'fund_balance',value=to_ui(f$saved_balance[i]))}
+    if(length(i)==1L && !is.na(i)){updateNumericInput(session,'fund_cost',value=to_ui(f$annual_cost[i]));updateNumericInput(session,'fund_balance',value=to_ui(f$saved_balance[i]))}
     goals<-get_goals(con);i<-match(isolate(input$goal_choice),as.character(goals$id))
-    if(length(i) == 1L && !is.na(i)){updateNumericInput(session,'goal_target',value=to_ui(goals$target_amount[i]));
+    if(length(i)==1L && !is.na(i)){updateNumericInput(session,'goal_target',value=to_ui(goals$target_amount[i]));
       updateNumericInput(session,'goal_saved',value=to_ui(goals$saved_balance[i]));updateNumericInput(session,'goal_monthly',value=to_ui(goals$monthly_allocation[i]))}
     extras<-get_debt_extras(con);i<-match(isolate(input$extra_payments_table_rows_selected),seq_len(nrow(extras)))
-    if(length(i) == 1L && !is.na(i))updateNumericInput(session,'extra_payment_amount',value=to_ui(extras$amount[i]))
+    if(length(i)==1L && !is.na(i))updateNumericInput(session,'extra_payment_amount',value=to_ui(extras$amount[i]))
     loans<-get_receivables(con);i<-match(isolate(input$loan_choice),as.character(loans$id))
-    if(length(i) == 1L && !is.na(i))updateNumericInput(session,'loan_amount',value=to_ui(loans$amount[i]))
+    if(length(i)==1L && !is.na(i))updateNumericInput(session,'loan_amount',value=to_ui(loans$amount[i]))
     accounts<-get_accounts(con);i<-match(isolate(input$account_choice),accounts$account_key)
-    if(length(i) == 1L && !is.na(i))updateTextInput(session,'account_balance',value=if(is.na(accounts$balance_czk[i]))'' else as.character(to_ui(accounts$balance_czk[i])))
+    if(length(i)==1L && !is.na(i))updateTextInput(session,'account_balance',value=if(is.na(accounts$balance_czk[i]))'' else as.character(to_ui(accounts$balance_czk[i])))
     updateSelectInput(session,'setting_currency' ,selected=st$display_currency[1])
     updateNumericInput(session,'setting_fx',value=st$eur_czk_rate[1])
     updateNumericInput(session,'setting_other_assets',value=to_ui(st$other_assets[1]))
@@ -1257,7 +1293,7 @@ server <- function(input, output, session) {
   })
   observeEvent(input$account_choice,{
     a<-account_data();i<-match(input$account_choice,a$account_key)
-    if(is.na(i)){
+    if(length(i)!=1L || is.na(i)){
       updateTextInput(session,'account_key',value='');updateTextInput(session,'account_name',value='')
       updateTextInput(session,'account_bank',value='');updateTextInput(session,'account_balance',value='')
       updateCheckboxInput(session,'account_owned',value=TRUE)
@@ -1294,7 +1330,7 @@ server <- function(input, output, session) {
   })
   observeEvent(input$goal_choice,{
     g<-goal_data();i<-if(is.null(input$goal_choice) || identical(input$goal_choice,'new'))NA_integer_ else match(as.integer(input$goal_choice),g$id)
-    if(is.na(i)){
+    if(length(i)!=1L || is.na(i)){
       updateTextInput(session,'goal_name',value='')
       updateNumericInput(session,'goal_target',value=to_ui(12000))
       updateNumericInput(session,'goal_saved',value=0);updateNumericInput(session,'goal_monthly',value=to_ui(1000))
