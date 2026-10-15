@@ -1,0 +1,6 @@
+# Launch BudgetForge locally from its folder using source("launch.R")
+packages <- c("shiny","bslib","DBI","RSQLite","digest","dplyr","ggplot2","DT","testthat")
+missing <- setdiff(packages, rownames(installed.packages()))
+if (length(missing)) install.packages(missing,repos="https://cloud.r-project.org")
+shiny::runApp(".",launch.browser=TRUE)
+

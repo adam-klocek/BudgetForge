@@ -1,0 +1,9 @@
+data/*
+!data/.gitkeep
+.Rhistory
+.Rproj.user/
+.RData
+*.csv
+*.xlsx
+*.xls
+.DS_Store
