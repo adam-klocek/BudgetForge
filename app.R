@@ -388,14 +388,39 @@ ui <- bslib::page_navbar(
 )
 
 
-server <- function(input,output,session) {
-  con <- connect_db()
+
+server <- function(input, output, session) {
+  
+  # Create a unique temporary database for this session.
+  session_db <- tempfile(
+    pattern = "budgetforge_",
+    fileext = ".sqlite"
+  )
+  
+  # Connect only this visitor to their own database.
+  con <- connect_db(path = session_db)
+  
   init_db(con)
   init_planning_db(con)
   init_income_db(con)
   init_receivables_db(con)
   init_budgetforge_db(con)
-  session$onSessionEnded(function() DBI::dbDisconnect(con))
+  
+  session$onSessionEnded(function() {
+    
+    if (DBI::dbIsValid(con)) {
+      DBI::dbDisconnect(con)
+    }
+    
+    # Clean up this session's temporary database files.
+    unlink(c(
+      session_db,
+      paste0(session_db, "-wal"),
+      paste0(session_db, "-shm"),
+      paste0(session_db, "-journal")
+    ))
+    
+  })
   rev <- reactiveVal(0L)
   refresh <- function() rev(isolate(rev())+1L)
   inform <- function(expr, message="Saved") tryCatch({force(expr);refresh();showNotification(message,type="message",duration=4)},error=function(e) showNotification(conditionMessage(e),type="error",duration=9))
