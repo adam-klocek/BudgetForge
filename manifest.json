@@ -2834,7 +2834,7 @@
       "checksum": "8a27a91b449baeba8ad89786492a444c"
     },
     "app.R": {
-      "checksum": "ec9c35f7bfe984ce4e11bd4e3512d4f8"
+      "checksum": "b63a1266a20055ece14d031b8ef52fb3"
     },
     "data/.gitkeep": {
       "checksum": "d41d8cd98f00b204e9800998ecf8427e"
@@ -2868,6 +2868,9 @@
     },
     "README.md": {
       "checksum": "05060693c52a1b0a8b56c0fbf4233319"
+    },
+    "supabase_password.txt": {
+      "checksum": "6813f0507a91cbea171264948318f885"
     },
     "tests/testthat.R": {
       "checksum": "e92dc60986467b89f638ae2ce087c53b"
